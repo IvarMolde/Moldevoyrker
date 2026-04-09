@@ -7,7 +7,6 @@ const {
   LevelFormat, PageNumber, TabStopType, TabStopPosition,
 } = require('docx');
 const pptxgen = require('pptxgenjs');
-const archiver = require('archiver');
 const fs = require('fs');
 const path = require('path');
 
@@ -31,8 +30,8 @@ const C = {
 function getModel() {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error('GEMINI_API_KEY mangler i miljøvariabler.');
-  // gemini-1.5-flash: god balanse mellom kvalitet og kostnad
-  return new GoogleGenerativeAI(key).getGenerativeModel({ model: 'gemini-1.5-flash' });
+  // gemini-2.0-flash: god balanse mellom kvalitet og kostnad
+  return new GoogleGenerativeAI(key).getGenerativeModel({ model: 'gemini-2.0-flash' });
 }
 
 // ─── Prompt ────────────────────────────────────────────────────────────────────
@@ -498,14 +497,12 @@ app.post('/api/generer', async (req, res) => {
     ]);
 
     const safeName = yrke.replace(/[^a-zA-ZæøåÆØÅ0-9\-]/g, '_');
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="${safeName}-${niva}.zip"`);
-
-    const archive = archiver('zip', { zlib: { level: 6 } });
-    archive.pipe(res);
-    archive.append(docxBuf, { name: `${safeName}-arbeidshefte-${niva}.docx` });
-    archive.append(pptxBuf, { name: `${safeName}-presentasjon-${niva}.pptx` });
-    await archive.finalize();
+    res.json({
+      docx: docxBuf.toString('base64'),
+      pptx: pptxBuf.toString('base64'),
+      filnavn: safeName,
+      niva: niva,
+    });
 
   } catch (err) {
     console.error(err);
