@@ -31,7 +31,7 @@ function getModel() {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error('GEMINI_API_KEY mangler i miljøvariabler.');
   // gemini-2.0-flash: god balanse mellom kvalitet og kostnad
-  return new GoogleGenerativeAI(key).getGenerativeModel({ model: 'gemini-2.0-flash' });
+ return new GoogleGenerativeAI(key).getGenerativeModel({ model: 'gemini-2.5-flash-preview-04-17' });
 }
 
 // ─── Prompt ────────────────────────────────────────────────────────────────────
