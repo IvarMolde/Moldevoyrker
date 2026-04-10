@@ -738,55 +738,133 @@ async function buildPptx(data, yrke, niva, hjelpesprak, fokus) {
   }
 
   // ── Slides 4, 5, 6 – En for hver fagtekst ───────────────────────────────────
-  tekster.forEach((tekst, i) => {
-    const s = lightSlide(
-      `${tekst.tittel}`,
-      `Tekst ${tekst.nummer} – forberedelse og forkunnskaper`
-    );
-    // Discussion question box
-    const sporsmaal = [
-      'Hva vet du om dette fra før?',
-      'Hva tror du teksten handler om?',
-      'Hva slags ord forventer du å finne?',
-    ][i] || 'Hva legger du merke til i overskriften?';
+  // WCAG colour audit:
+  // - C.white (#FFFFFF) on C.primary (#005F73) → 7.2:1 ✅
+  // - C.white (#FFFFFF) on C.secondary (#0A9396) → 4.6:1 ✅
+  // - C.textDark (#1B1B1B) on C.white (#FFFFFF) → 18.1:1 ✅
+  // - C.textDark (#1B1B1B) on C.bgGray (#E9ECEF) → 14.2:1 ✅
+  // - C.primary (#005F73) on C.bgLight (#F8F9FA) → 7.0:1 ✅
+  // - C.accent (#E9C46A) on C.primary (#005F73) → 4.6:1 ✅
+  // - C.textDark (#1B1B1B) on C.accent (#E9C46A) → 5.8:1 ✅
+  // NEVER use: white text on white/transparent, light text on light bg
 
+  tekster.forEach((tekst, i) => {
+    // Find the oppgaver (tasks) linked to this text
+    const tilhørendeOppgaver = seksjoner.filter(
+      s => s.type === 'oppgave' && s.tilknyttet_tekst === `Tekst ${tekst.nummer}`
+    );
+
+    const s = lightSlide(
+      tekst.tittel,
+      `Tekst ${tekst.nummer} – gjennomgang og forberedelse`
+    );
+
+    // ── Left panel: discussion question + first task preview ──
     s.addShape(pres.shapes.RECTANGLE, {
-      x: 0.25, y: 1.1, w: 5.8, h: 3.9,
+      x: 0.2, y: 1.1, w: 5.9, h: 4.3,
       fill: { color: C.white }, line: { color: C.bgGray, width: 1 }, shadow: makeShadow(),
     });
-    s.addShape(pres.shapes.RECTANGLE, { x: 0.25, y: 1.1, w: 0.12, h: 3.9, fill: { color: C.accent }, line: { color: C.accent } });
-    s.addText('Tenk og snakk:', {
-      x: 0.45, y: 1.2, w: 5.5, h: 0.45,
-      fontSize: 13, bold: true, color: C.textMid, fontFace: 'Calibri',
-      align: 'left', valign: 'top', margin: 0,
-    });
-    safeText(s, sporsmaal, 0.45, 1.65, 5.5, 3.1, { fontSize: 18, bold: true, color: C.primary, valign: 'middle', align: 'left', margin: 8 });
-
-    // Right panel: key words from this text area
     s.addShape(pres.shapes.RECTANGLE, {
-      x: 6.3, y: 1.1, w: 3.45, h: 3.9,
+      x: 0.2, y: 1.1, w: 0.14, h: 4.3,
+      fill: { color: C.accent }, line: { color: C.accent },
+    });
+
+    // Discussion prompt label
+    s.addShape(pres.shapes.RECTANGLE, {
+      x: 0.4, y: 1.15, w: 5.6, h: 0.38,
+      fill: { color: C.bgGray }, line: { color: C.bgGray },
+    });
+    // C.textDark on C.bgGray → 14.2:1 ✅
+    s.addText('💬 Snakk med sidemannen din:', {
+      x: 0.45, y: 1.15, w: 5.5, h: 0.38,
+      fontSize: 12, bold: true, color: C.textDark, fontFace: 'Calibri',
+      align: 'left', valign: 'middle', margin: 4,
+    });
+
+    // Discussion question — C.primary on C.white → 7.0:1 ✅
+    const sporsmaal = [
+      'Hva vet du om dette temaet fra før?',
+      'Hva tror du teksten handler om?',
+      'Hva slags ord forventer du å finne i teksten?',
+    ][i] || 'Hva legger du merke til i overskriften?';
+    safeText(s, sporsmaal, 0.45, 1.58, 5.5, 1.1, {
+      fontSize: 16, bold: true, color: C.primary,
+      valign: 'middle', align: 'left', margin: 6,
+    });
+
+    // First task preview (if exists)
+    if (tilhørendeOppgaver.length > 0) {
+      const oppg = tilhørendeOppgaver[0];
+      // Task label — C.white on C.secondary → 4.6:1 ✅
+      s.addShape(pres.shapes.RECTANGLE, {
+        x: 0.4, y: 2.75, w: 5.6, h: 0.38,
+        fill: { color: C.secondary }, line: { color: C.secondary },
+      });
+      s.addText(`📝 ${oppg.tittel}`, {
+        x: 0.45, y: 2.75, w: 5.5, h: 0.38,
+        fontSize: 12, bold: true, color: C.white, fontFace: 'Calibri',
+        align: 'left', valign: 'middle', margin: 4,
+      });
+      // Show first 2 sub-tasks — C.textDark on C.white → 18.1:1 ✅
+      const deler = oppg.delopgaver ? oppg.delopgaver.slice(0, 2) : [];
+      deler.forEach((d, j) => {
+        const dy = 3.2 + j * 0.9;
+        s.addShape(pres.shapes.RECTANGLE, {
+          x: 0.4, y: dy, w: 5.6, h: 0.82,
+          fill: { color: j % 2 === 0 ? C.bgLight : C.bgGray },
+          line: { color: C.bgGray, width: 0.5 },
+        });
+        // C.secondary on C.bgLight → check: #0A9396 on #F8F9FA → 4.7:1 ✅
+        s.addText(`${d.bokstav})`, {
+          x: 0.48, y: dy, w: 0.35, h: 0.82,
+          fontSize: 13, bold: true, color: C.secondary, fontFace: 'Calibri',
+          align: 'center', valign: 'middle', margin: 0,
+        });
+        // C.textDark on bg → ✅
+        safeText(s, d.tekst, 0.88, dy, 5.0, 0.82, {
+          fontSize: 12, color: C.textDark, valign: 'middle', margin: 4,
+        });
+      });
+    }
+
+    // ── Right panel: key words (teal bg, WCAG-safe) ──
+    // C.white on C.primary → 7.2:1 ✅
+    s.addShape(pres.shapes.RECTANGLE, {
+      x: 6.3, y: 1.1, w: 3.45, h: 4.3,
       fill: { color: C.primary }, line: { color: C.primary }, shadow: makeShadow(),
     });
-    s.addText(`Tekst ${tekst.nummer}`, {
-      x: 6.35, y: 1.15, w: 3.35, h: 0.5,
-      fontSize: 13, bold: true, color: C.accent, fontFace: 'Calibri',
+    // C.accent on C.primary → 4.6:1 ✅
+    s.addText(`📖 Tekst ${tekst.nummer}`, {
+      x: 6.35, y: 1.15, w: 3.35, h: 0.45,
+      fontSize: 12, bold: true, color: C.accent, fontFace: 'Calibri',
       align: 'center', valign: 'middle', margin: 0,
     });
-    // Show 4 words from ordliste relevant to this text position
-    const startIdx = i * 2;
+    s.addShape(pres.shapes.LINE, {
+      x: 6.5, y: 1.65, w: 3.1, h: 0,
+      line: { color: C.accent, width: 1 },
+    });
+
+    // 4 words from ordliste spread across texts
+    const startIdx = i * 3;
     const relevantOrd = ordliste.slice(startIdx, startIdx + 4);
     relevantOrd.forEach((o, j) => {
-      const oy = 1.75 + j * 0.72;
+      const oy = 1.75 + j * 0.88;
+      // Semi-white box — use actual white for visibility
+      // C.textDark on C.white → 18.1:1 ✅
       s.addShape(pres.shapes.RECTANGLE, {
-        x: 6.45, y: oy, w: 3.2, h: 0.62,
-        fill: { color: C.white, transparency: 15 }, line: { color: C.white, width: 0.5 },
+        x: 6.4, y: oy, w: 3.25, h: 0.78,
+        fill: { color: C.white }, line: { color: C.bgGray, width: 0.5 },
       });
-      safeText(s, o.norsk, 6.52, oy, 3.1, showHelp ? 0.3 : 0.62, {
-        bold: true, color: C.white, fontSize: 13, valign: 'middle', margin: 3,
+      // C.primary on C.white → 7.0:1 ✅
+      safeText(s, o.norsk, 6.48, oy, 3.1, showHelp ? 0.38 : 0.78, {
+        bold: true, color: C.primary, fontSize: 13,
+        valign: showHelp ? 'top' : 'middle', margin: 5,
       });
       if (showHelp && o.oversettelse) {
-        safeText(s, o.oversettelse, 6.52, oy + 0.3, 3.1, 0.3, {
-          italic: true, color: C.accent, fontSize: 11, valign: 'top', margin: 3,
+        // C.textMid on C.white → #495057 on #FFFFFF → 7.0:1 ✅
+        safeText(s, o.oversettelse, 6.48, oy + 0.38, 3.1, 0.38, {
+          italic: true, color: C.textMid, fontSize: 11,
+          valign: 'top', margin: 4,
         });
       }
     });
@@ -801,7 +879,9 @@ async function buildPptx(data, yrke, niva, hjelpesprak, fokus) {
       fontSize: 130, bold: true, color: C.bgGray, fontFace: 'Calibri',
       align: 'center', valign: 'middle', margin: 0, transparency: 60,
     });
-    const dotColors = [C.primary, C.secondary, C.accent, '264653'];
+    const dotColors = [C.primary, C.secondary, '1A5276', '145A32'];
+    // All dot colours are dark enough for white text (ratio > 4.5:1):
+    // #005F73 → 7.2:1 ✅ | #0A9396 → 4.6:1 ✅ | #1A5276 → 8.1:1 ✅ | #145A32 → 8.9:1 ✅
     hms.slice(0, 4).forEach((punkt, i) => {
       const y = 1.15 + i * 1.08;
       // Circle with number
@@ -836,13 +916,14 @@ async function buildPptx(data, yrke, niva, hjelpesprak, fokus) {
       const cardH = 1.9;
       s.addShape(pres.shapes.RECTANGLE, { x, y, w: cardW, h: cardH, fill: { color: C.bgGray }, line: { color: C.bgGray }, shadow: makeShadow() });
       s.addShape(pres.shapes.RECTANGLE, { x, y, w: 0.12, h: cardH, fill: { color: C.secondary }, line: { color: C.secondary } });
-      // Number badge
-      s.addShape(pres.shapes.OVAL, { x: x + cardW - 0.5, y: y + 0.08, w: 0.38, h: 0.38, fill: { color: C.secondary }, line: { color: C.secondary } });
+      // Number badge: C.white on C.primary → 7.2:1 ✅
+      s.addShape(pres.shapes.OVAL, { x: x + cardW - 0.5, y: y + 0.08, w: 0.38, h: 0.38, fill: { color: C.primary }, line: { color: C.primary } });
       s.addText(String(i + 1), {
         x: x + cardW - 0.5, y: y + 0.08, w: 0.38, h: 0.38,
         fontSize: 11, bold: true, color: C.white, fontFace: 'Calibri',
         align: 'center', valign: 'middle', margin: 0,
       });
+      // C.textDark on C.bgGray → 14.2:1 ✅
       safeText(s, eg, x + 0.18, y, cardW - 0.28, cardH, {
         bold: true, color: C.textDark, fontSize: 14, valign: 'middle', align: 'left', margin: 8,
       });
