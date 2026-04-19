@@ -558,6 +558,7 @@ function pixabaySOk(apiKey, sokeord, medKategori) {
       });
       res.on('error', () => resolve([]));
     });
+    req.setTimeout(6000, () => { req.destroy(); resolve([]); });
     req.on('error', (e) => {
       console.error('Pixabay request-feil:', e.message);
       resolve([]);
@@ -591,20 +592,57 @@ function velgBildeUrl(bilde) {
   return null;
 }
 
-function lastNedBildeUrl(imgUrl, kreditt, resolve) {
-  https.get(imgUrl, (imgRes) => {
-    if (imgRes.statusCode === 301 || imgRes.statusCode === 302) {
-      return lastNedBildeUrl(imgRes.headers.location, kreditt, resolve);
+function lastNedBildeUrl(imgUrl, kreditt, resolve, redirectTeller = 0) {
+  // Maksimalt 3 redirects for å unngå sirkel
+  if (redirectTeller > 3) {
+    console.error('For mange redirects – avbryter bildenedlasting');
+    return resolve(null);
+  }
+
+  const req = https.get(imgUrl, (imgRes) => {
+    // Følg redirects
+    if ((imgRes.statusCode === 301 || imgRes.statusCode === 302 || imgRes.statusCode === 307) && imgRes.headers.location) {
+      console.log(`  Redirect ${redirectTeller + 1}: ${imgRes.statusCode} → ${imgRes.headers.location.slice(0, 60)}...`);
+      imgRes.resume(); // tøm body
+      return lastNedBildeUrl(imgRes.headers.location, kreditt, resolve, redirectTeller + 1);
     }
+
+    // Avvis ikke-200 statuser
+    if (imgRes.statusCode !== 200) {
+      console.error(`  Bilde HTTP ${imgRes.statusCode} – hopper over`);
+      imgRes.resume();
+      return resolve(null);
+    }
+
     const chunks = [];
     imgRes.on('data', c => chunks.push(c));
     imgRes.on('end', () => {
       const buf = Buffer.concat(chunks);
-      console.log(`Bilde lastet ned: ${Math.round(buf.length / 1024)} KB`);
-      resolve(buf.length > 5000 ? { buf, kreditt } : null);
+      // Sjekk at det faktisk er et bilde (JPEG starter med FF D8)
+      if (buf.length < 5000 || buf[0] !== 0xFF || buf[1] !== 0xD8) {
+        console.error(`  Ugyldig bildedata (${buf.length} bytes) – hopper over`);
+        return resolve(null);
+      }
+      console.log(`  ✅ Bilde lastet ned: ${Math.round(buf.length / 1024)} KB`);
+      resolve({ buf, kreditt });
     });
-    imgRes.on('error', () => resolve(null));
-  }).on('error', () => resolve(null));
+    imgRes.on('error', (e) => {
+      console.error('  Bildenedlasting feil:', e.message);
+      resolve(null);
+    });
+  });
+
+  // Timeout på 8 sekunder – unngår at Vercel sin 10s-grense treffes
+  req.setTimeout(8000, () => {
+    console.error('  Bildenedlasting timeout (8s) – avbryter');
+    req.destroy();
+    resolve(null);
+  });
+
+  req.on('error', (e) => {
+    console.error('  Bilde-request feil:', e.message);
+    resolve(null);
+  });
 }
 
 async function hentBildeBuf(yrke) {
