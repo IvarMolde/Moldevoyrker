@@ -525,10 +525,11 @@ function pixabaySOk(apiKey, sokeord, medKategori) {
   return new Promise((resolve) => {
     const q = encodeURIComponent(sokeord);
     const kategori = medKategori ? '&category=people' : '';
-    // min_width=1280 sikrer høy kvalitet
-    // order=popular gir de mest relevante og vellikte bildene først
-    // response_group=high_resolution gir largeImageURL (1280px)
-    const path = `/api/?key=${apiKey}&q=${q}&image_type=photo&orientation=horizontal${kategori}&per_page=10&safesearch=true&min_width=1280&order=popular&response_group=high_resolution`;
+    // MERK: largeImageURL krever godkjent full API-tilgang fra Pixabay.
+    // webformatURL (640px) er alltid tilgjengelig og god nok for dokumenter.
+    // Vi bruker IKKE response_group=high_resolution siden det gir 400-feil
+    // for kontoer uten godkjent full tilgang.
+    const path = `/api/?key=${apiKey}&q=${q}&image_type=photo&orientation=horizontal${kategori}&per_page=10&safesearch=true&order=popular`;
 
     const options = {
       hostname: 'pixabay.com',
@@ -547,9 +548,8 @@ function pixabaySOk(apiKey, sokeord, medKategori) {
             return resolve([]);
           }
           const json = JSON.parse(raw);
-          // Filtrer til kun bilder som HAR largeImageURL – garanterer høy kvalitet
-          const hits = (json.hits || []).filter(b => b.largeImageURL);
-          console.log(`  Pixabay "${sokeord}" (people=${medKategori}): ${hits.length} høykvalitetstreff`);
+          const hits = json.hits || [];
+          console.log(`  Pixabay "${sokeord}" (people=${medKategori}): ${hits.length} treff`);
           resolve(hits);
         } catch (e) {
           console.error('Pixabay parse-feil:', e.message);
@@ -564,6 +564,31 @@ function pixabaySOk(apiKey, sokeord, medKategori) {
     });
     req.end();
   });
+}
+
+// Bygg høyest tilgjengelig bilde-URL fra Pixabay-treff.
+// largeImageURL krever godkjent full API-tilgang (de fleste kontoer har IKKE dette).
+// cdn.pixabay.com CDN-URLer er alltid tilgjengelige og bygges fra previewURL.
+function velgBildeUrl(bilde) {
+  // 1. largeImageURL (1280px) – kun for godkjente kontoer
+  if (bilde.largeImageURL) {
+    return { url: bilde.largeImageURL, kvalitet: '1280px' };
+  }
+
+  // 2. CDN-URL konstruert fra previewURL – ALLTID tilgjengelig
+  // previewURL: https://cdn.pixabay.com/photo/YYYY/MM/DD/HH/MM/slug-ID_150.jpg
+  // Bytt _150.jpg med _1280.jpg for stor versjon
+  if (bilde.previewURL && bilde.previewURL.includes('cdn.pixabay.com')) {
+    const storUrl = bilde.previewURL.replace(/_\d+\.jpg$/, '_1280.jpg');
+    return { url: storUrl, kvalitet: 'CDN 1280px' };
+  }
+
+  // 3. webformatURL (640px) – alltid tilgjengelig, siste fallback
+  if (bilde.webformatURL) {
+    return { url: bilde.webformatURL, kvalitet: '640px webformat' };
+  }
+
+  return null;
 }
 
 function lastNedBildeUrl(imgUrl, kreditt, resolve) {
@@ -604,20 +629,24 @@ async function hentBildeBuf(yrke) {
     }
 
     if (bilder.length > 0) {
-      console.log(`✅ Fant ${bilder.length} høykvalitetsbilder for "${sokeord}"`);
+      console.log(`✅ Fant ${bilder.length} bilder for "${sokeord}"`);
       const bilde = bilder[Math.floor(Math.random() * Math.min(bilder.length, 5))];
 
-      // Kun largeImageURL (1280px) – filtrert inn av pixabaySOk, garantert tilstede
-      const imgUrl = bilde.largeImageURL;
+      const bildeUrlInfo = velgBildeUrl(bilde);
+      if (!bildeUrlInfo) {
+        console.log(`Ingen gyldig bilde-URL – prøver neste strategi`);
+        continue;
+      }
+
       const kreditt = {
         fotograf:  bilde.user    || 'Ukjent',
         pageURL:   bilde.pageURL || `https://pixabay.com/photos/${bilde.id}/`,
         kortTekst: `${bilde.user || 'Ukjent'} via Pixabay`,
       };
-      console.log(`📸 Laster ned 1280px: ${kreditt.kortTekst}`);
-      console.log(`   Original: ${bilde.imageWidth}×${bilde.imageHeight}px`);
+      console.log(`📸 Laster ned (${bildeUrlInfo.kvalitet}): ${kreditt.kortTekst}`);
+      console.log(`   Bilde: ${bilde.imageWidth}×${bilde.imageHeight}px`);
 
-      return new Promise((resolve) => lastNedBildeUrl(imgUrl, kreditt, resolve));
+      return new Promise((resolve) => lastNedBildeUrl(bildeUrlInfo.url, kreditt, resolve));
     }
 
     console.log(`Ingen treff for "${sokeord}" – prøver neste strategi`);
