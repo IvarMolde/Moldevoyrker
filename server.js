@@ -464,7 +464,7 @@ async function lagSokestrategier(yrke) {
   // Dette løser problemet med sjeldne yrker som «begravelsesagent».
   return new Promise((resolve) => {
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return resolve([`${yrke} worker`, `${yrke} professional`]);
+    if (!apiKey) return resolve(['professional worker', 'workplace people', 'working professional']);
 
     const prompt = `You are helping find relevant photos for a Norwegian job title on Pixabay.
 Job title: "${yrke}"
@@ -507,26 +507,28 @@ Example: ["nurse patient hospital", "medical care nursing", "healthcare professi
             console.log(`Søkestrategier for "${yrke}":`, strategier);
             resolve(strategier);
           } else {
-            resolve([`${yrke} professional`, `${yrke} worker`, 'professional workplace']);
+            resolve(['professional worker', 'office workplace', 'working people']);
           }
         } catch (e) {
           console.error('Søkestrategi-parsing feilet:', e.message);
-          resolve([`${yrke} professional`, `${yrke} worker`, 'professional workplace']);
+          resolve(['professional worker', 'office workplace', 'working people']);
         }
       });
     });
-    req.on('error', () => resolve([`${yrke} professional`, `${yrke} worker`, 'professional workplace']));
+    req.on('error', () => resolve(['professional worker', 'office workplace', 'working people']));
     req.write(body);
     req.end();
   });
 }
 
 function pixabaySOk(apiKey, sokeord, medKategori) {
-  // Returnerer Promise med Pixabay-treff for ett søkeord
   return new Promise((resolve) => {
     const q = encodeURIComponent(sokeord);
     const kategori = medKategori ? '&category=people' : '';
-    const path = `/api/?key=${apiKey}&q=${q}&image_type=photo&orientation=horizontal${kategori}&per_page=10&safesearch=true&min_width=1280&editors_choice=false`;
+    // min_width=1280 sikrer høy kvalitet
+    // order=popular gir de mest relevante og vellikte bildene først
+    // response_group=high_resolution gir largeImageURL (1280px)
+    const path = `/api/?key=${apiKey}&q=${q}&image_type=photo&orientation=horizontal${kategori}&per_page=10&safesearch=true&min_width=1280&order=popular&response_group=high_resolution`;
 
     const options = {
       hostname: 'pixabay.com',
@@ -540,14 +542,26 @@ function pixabaySOk(apiKey, sokeord, medKategori) {
       res.on('data', c => raw += c);
       res.on('end', () => {
         try {
-          if (res.statusCode !== 200) return resolve([]);
+          if (res.statusCode !== 200) {
+            console.error(`Pixabay HTTP ${res.statusCode}:`, raw.slice(0, 200));
+            return resolve([]);
+          }
           const json = JSON.parse(raw);
-          resolve(json.hits || []);
-        } catch (e) { resolve([]); }
+          // Filtrer til kun bilder som HAR largeImageURL – garanterer høy kvalitet
+          const hits = (json.hits || []).filter(b => b.largeImageURL);
+          console.log(`  Pixabay "${sokeord}" (people=${medKategori}): ${hits.length} høykvalitetstreff`);
+          resolve(hits);
+        } catch (e) {
+          console.error('Pixabay parse-feil:', e.message);
+          resolve([]);
+        }
       });
       res.on('error', () => resolve([]));
     });
-    req.on('error', () => resolve([]));
+    req.on('error', (e) => {
+      console.error('Pixabay request-feil:', e.message);
+      resolve([]);
+    });
     req.end();
   });
 }
@@ -590,19 +604,20 @@ async function hentBildeBuf(yrke) {
     }
 
     if (bilder.length > 0) {
-      console.log(`✅ Fant ${bilder.length} bilder for "${sokeord}"`);
+      console.log(`✅ Fant ${bilder.length} høykvalitetsbilder for "${sokeord}"`);
       const bilde = bilder[Math.floor(Math.random() * Math.min(bilder.length, 5))];
-      // Anbefalt format jfr. Pixabay: «by [Contributor] via Pixabay»
-      // pageURL fra API-svaret gir direkte lenke til originalbildet på Pixabay
+
+      // Kun largeImageURL (1280px) – filtrert inn av pixabaySOk, garantert tilstede
+      const imgUrl = bilde.largeImageURL;
       const kreditt = {
-        fotograf:  bilde.user      || 'Ukjent',
-        pageURL:   bilde.pageURL   || `https://pixabay.com/photos/${bilde.id}/`,
+        fotograf:  bilde.user    || 'Ukjent',
+        pageURL:   bilde.pageURL || `https://pixabay.com/photos/${bilde.id}/`,
         kortTekst: `${bilde.user || 'Ukjent'} via Pixabay`,
       };
-      console.log(`Kreditt: ${kreditt.kortTekst} | ${kreditt.pageURL}`);
-      console.log(`Størrelse: ${bilde.imageWidth}×${bilde.imageHeight}px`);
+      console.log(`📸 Laster ned 1280px: ${kreditt.kortTekst}`);
+      console.log(`   Original: ${bilde.imageWidth}×${bilde.imageHeight}px`);
 
-      return new Promise((resolve) => lastNedBildeUrl(bilde.largeImageURL, kreditt, resolve));
+      return new Promise((resolve) => lastNedBildeUrl(imgUrl, kreditt, resolve));
     }
 
     console.log(`Ingen treff for "${sokeord}" – prøver neste strategi`);
@@ -691,17 +706,12 @@ async function buildDocx(data, hjelpesprak, plassering, bildeObj, grammatikkData
     });
   }
 
-  // Les JPEG-dimensjoner fra SOF-marker for korrekt skalering
   // ── Robust JPEG-dimensjonsleser ──────────────────────────────────────────────
-  // Støtter baseline (SOF0/SOF2) og progressive JPEG (SOF1/SOF3 m.fl.)
   function lesJpegDimensjoner(buf) {
     try {
-      // Alle SOF-markører som inneholder dimensjoner
       const sofMarkors = [0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB];
-      let i = 0;
-      // Sjekk JPEG-signatur
       if (buf[0] !== 0xFF || buf[1] !== 0xD8) return { w: 1280, h: 853 };
-      i = 2;
+      let i = 2;
       while (i < buf.length - 9) {
         if (buf[i] !== 0xFF) { i++; continue; }
         const marker = buf[i + 1];
@@ -709,13 +719,13 @@ async function buildDocx(data, hjelpesprak, plassering, bildeObj, grammatikkData
           const h = (buf[i + 5] << 8) | buf[i + 6];
           const w = (buf[i + 7] << 8) | buf[i + 8];
           if (w > 0 && h > 0) {
-            console.log(`JPEG-dimensjoner lest: ${w}×${h}px`);
+            console.log(`JPEG-dimensjoner: ${w}×${h}px`);
             return { w, h };
           }
         }
-        // Hopp til neste marker via lengdefeltet
+        // Sikker hopp: len inkluderer de 2 lengdebytene selv
         const len = (buf[i + 2] << 8) | buf[i + 3];
-        i += 2 + (len > 1 ? len : 1);
+        i += 2 + Math.max(len, 2); // aldri hoppe 0 – hindrer uendelig løkke
       }
     } catch (e) { /* ignorer */ }
     console.log('JPEG-dimensjoner ikke funnet – bruker standard 1280×853');
@@ -723,7 +733,7 @@ async function buildDocx(data, hjelpesprak, plassering, bildeObj, grammatikkData
   }
 
   // ── Beregn visningsdimensjoner med bevart aspektforhold ──────────────────────
-  // Bildet skaleres NED for å passe i maxW×maxH – aldri opp, aldri strekk
+  // Skalerer ned proporsjonalt – aldri opp, aldri strekk
   function beregnDimensjoner(origW, origH, maxW, maxH) {
     const skala = Math.min(maxW / origW, maxH / origH, 1);
     return {
@@ -737,11 +747,11 @@ async function buildDocx(data, hjelpesprak, plassering, bildeObj, grammatikkData
     if (!bildeBuf) return [];
     const { w: origW, h: origH } = lesJpegDimensjoner(bildeBuf);
 
-    // A4 innholdsbredde: 11906 - 2×1134 = 9638 DXA
-    // Ved 96 dpi tilsvarer 9638 DXA ≈ 643 px → vi bruker 620px som sikker grense
-    // Maks høyde 260px for å holde forsiden kompakt
-    const { w: visW, h: visH } = beregnDimensjoner(origW, origH, 620, 260);
-    console.log(`Word-bilde: orig ${origW}×${origH} → vis ${visW}×${visH}`);
+    // A4 innholdsbredde ≈ 620px ved 96dpi
+    // Bevar aspektforhold: sett max bredde til 620px, max høyde til 310px
+    // For et 3:2-bilde gir dette 620×413 → skaleres til 620×310 (panorama)
+    const { w: visW, h: visH } = beregnDimensjoner(origW, origH, 620, 310);
+    console.log(`Word-bilde: orig ${origW}×${origH} → vis ${visW}×${visH}px`);
 
     return [
       new Paragraph({
