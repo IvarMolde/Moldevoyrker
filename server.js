@@ -289,7 +289,21 @@ STRENGE KRAV:
 - Alle oppgaver har nøyaktig 5 delopgaver (a–e), der a–c er litt lettere enn d–e
 - Ordlisten: 12–16 ord hentet fra alle tre tekstene
 - Legg til totalt 10–12 seksjoner i "seksjoner"-arrayet (3 tekster + 7–9 oppgaver)
-- NORSK RETTSKRIVING: Yrkestitler skrives ALLTID med liten forbokstav på norsk. Skriv «sykepleier», ikke «Sykepleier». Skriv «begravelsesagent», ikke «Begravelsesagent». Dette gjelder inne i setninger, i oppgavetitler og overalt i teksten. Unntaket er kun om yrket starter en setning.${sprak && sprak !== 'ingen' ? `\n- OVERSETTELSE: Hvert "oversettelse"-felt MÅ inneholde ${sprak}. KUN ${sprak}. Kontroller hvert felt før du svarer.` : ''}`;
+- NORSK RETTSKRIVING: Yrkestitler skrives ALLTID med liten forbokstav på norsk. Skriv «sykepleier», ikke «Sykepleier». Skriv «begravelsesagent», ikke «Begravelsesagent». Dette gjelder inne i setninger, i oppgavetitler og overalt i teksten. Unntaket er kun om yrket starter en setning.
+
+ORDLISTE-FORMAT (KRITISK – følg nøyaktig):
+- SUBSTANTIV: ALLTID vis med ubestemt artikkel foran. Bruk «en» for hankjønn, «ei» eller «en» for hunkjønn (bokmål tillater begge), «et» for intetkjønn. Eksempler:
+  • «en pasient» (ikke «pasient»)
+  • «et sykehus» (ikke «sykehus»)
+  • «en journal» (ikke «journal»)
+  • «et verneutstyr» (ikke «verneutstyr»)
+- VERB: ALLTID vis i infinitiv med infinitivsmerket «å» foran. Eksempler:
+  • «å behandle» (ikke «behandle», ikke «behandler»)
+  • «å undersøke» (ikke «undersøke»)
+  • «å starte» (ikke «starter»)
+- ADJEKTIV: vis i grunnform (ubestemt hankjønn entall), f.eks. «rask», «profesjonell», «ansvarlig»
+- UTTRYKK/FLERE ORD: behold naturlig form, f.eks. «å ta ansvar», «førstehjelp»
+- Dette formatet er ABSOLUTT – alle ord i "norsk"-feltet MÅ følge disse reglene${sprak && sprak !== 'ingen' ? `\n- OVERSETTELSE: Hvert "oversettelse"-felt MÅ inneholde ${sprak}. KUN ${sprak}. Kontroller hvert felt før du svarer.` : ''}`;
 }
 
 // ─── Grammatikk-prompt ────────────────────────────────────────────────────────
@@ -763,19 +777,27 @@ async function buildDocx(data, hjelpesprak, plassering, bildeObj, grammatikkData
       new Paragraph({
         spacing: { before: 300, after: 60 },
         shading: { fill: C.primary, type: ShadingType.CLEAR },
+        keepNext: true,  // Hold sammen med neste paragraf
+        keepLines: true,
         children: [new TextRun({ text: `  Oppgave ${nr}  `, bold: true, size: 26, color: C.white, font: 'Calibri' })],
       }),
       ...(visTekst ? [new Paragraph({
         spacing: { before: 40, after: 40 },
         shading: { fill: C.secondary, type: ShadingType.CLEAR },
+        keepNext: true,
+        keepLines: true,
         children: [new TextRun({ text: `  ${typeIkon} ${tilknyttetTekst}  `, size: 20, color: C.white, font: 'Calibri' })],
       })] : []),
       new Paragraph({
         spacing: { before: 60, after: 60 },
+        keepNext: true,
+        keepLines: true,
         children: [new TextRun({ text: tittel, bold: true, size: 28, color: C.textDark, font: 'Calibri' })],
       }),
       new Paragraph({
         spacing: { after: 120 },
+        keepNext: true,  // Instruksjonen må holdes sammen med tabellen under
+        keepLines: true,
         children: [new TextRun({ text: instruksjon, italics: true, size: 24, color: C.textMid, font: 'Calibri' })],
       }),
     ];
@@ -888,10 +910,13 @@ async function buildDocx(data, hjelpesprak, plassering, bildeObj, grammatikkData
     } else if (seksjon.type === 'oppgave') {
       const deloRows = seksjon.delopgaver.map((d, i) => {
         const fill = i % 2 === 0 ? C.white : C.bgGray;
-        return new TableRow({ children: [
-          new TableCell({ borders: noBorders, width: { size: 800, type: WidthType.DXA }, shading: { fill, type: ShadingType.CLEAR }, margins: { top: 80, bottom: 80, left: 120, right: 60 }, children: [new Paragraph({ children: [new TextRun({ text: `${d.bokstav})`, bold: true, size: 24, color: C.primary, font: 'Calibri' })] })] }),
-          new TableCell({ borders: noBorders, width: { size: 8200, type: WidthType.DXA }, shading: { fill, type: ShadingType.CLEAR }, margins: { top: 80, bottom: 80, left: 60, right: 120 }, children: [new Paragraph({ children: [new TextRun({ text: d.tekst, size: 24, font: 'Calibri' })] }), svarLinje()] }),
-        ]});
+        return new TableRow({
+          cantSplit: true, // hindrer at raden deles over to sider
+          children: [
+            new TableCell({ borders: noBorders, width: { size: 800, type: WidthType.DXA }, shading: { fill, type: ShadingType.CLEAR }, margins: { top: 80, bottom: 80, left: 120, right: 60 }, children: [new Paragraph({ children: [new TextRun({ text: `${d.bokstav})`, bold: true, size: 24, color: C.primary, font: 'Calibri' })] })] }),
+            new TableCell({ borders: noBorders, width: { size: 8200, type: WidthType.DXA }, shading: { fill, type: ShadingType.CLEAR }, margins: { top: 80, bottom: 80, left: 60, right: 120 }, children: [new Paragraph({ children: [new TextRun({ text: d.tekst, size: 24, font: 'Calibri' })] }), svarLinje()] }),
+          ],
+        });
       });
       seksjonerBlock.push(
         ...oppgaveHeader(seksjon.nummer, seksjon.tittel, seksjon.instruksjon, seksjon.tilknyttet_tekst, seksjon.oppgavetype),
@@ -981,10 +1006,14 @@ async function buildDocx(data, hjelpesprak, plassering, bildeObj, grammatikkData
         new Paragraph({
           spacing: { before: 280, after: 60 },
           shading: { fill: C.secondary, type: ShadingType.CLEAR },
+          keepNext: true,
+          keepLines: true,
           children: [new TextRun({ text: `  ${ikon} Oppgave G${oppg.nummer}: ${oppg.tittel}  `, bold: true, size: 24, color: C.white, font: 'Calibri' })],
         }),
         new Paragraph({
           spacing: { before: 60, after: 100 },
+          keepNext: true,
+          keepLines: true,
           children: [new TextRun({ text: oppg.instruksjon, italics: true, size: 22, color: C.textMid, font: 'Calibri' })],
         })
       );
@@ -999,6 +1028,8 @@ async function buildDocx(data, hjelpesprak, plassering, bildeObj, grammatikkData
             new Paragraph({
               spacing: { before: 60, after: 20 },
               shading: { fill, type: ShadingType.CLEAR },
+              keepNext: true,
+              keepLines: true,
               children: [
                 new TextRun({ text: `${d.bokstav})  `, bold: true, size: 24, color: C.primary, font: 'Calibri' }),
                 new TextRun({ text: d.tekst, size: 24, font: 'Calibri' }),
@@ -1008,6 +1039,8 @@ async function buildDocx(data, hjelpesprak, plassering, bildeObj, grammatikkData
               spacing: { before: 0, after: 20 },
               shading: { fill, type: ShadingType.CLEAR },
               indent: { left: 360 },
+              keepNext: true,
+              keepLines: true,
               children: d.alternativer.map((alt, ai) =>
                 new TextRun({ text: `  ${['A', 'B', 'C'][ai]}) ${alt}   `, size: 22, font: 'Calibri', color: C.textMid })
               ),
@@ -1015,29 +1048,35 @@ async function buildDocx(data, hjelpesprak, plassering, bildeObj, grammatikkData
             svarLinje()
           );
         } else if (oppg.type === 'matching') {
-          // Matching: to kolonner
+          // Matching: to kolonner – cantSplit hindrer deling av rad
           grammatikkBlock.push(
             new Table({
               width: { size: 9000, type: WidthType.DXA },
               columnWidths: [400, 4000, 4600],
-              rows: [new TableRow({ children: [
-                new TableCell({ borders: noBorders, width: { size: 400, type: WidthType.DXA }, shading: { fill, type: ShadingType.CLEAR }, margins: { top: 60, bottom: 60, left: 80, right: 40 }, children: [new Paragraph({ children: [new TextRun({ text: `${d.bokstav})`, bold: true, size: 24, color: C.primary, font: 'Calibri' })] })] }),
-                new TableCell({ borders: { right: { style: BorderStyle.SINGLE, size: 4, color: C.bgGray } }, width: { size: 4000, type: WidthType.DXA }, shading: { fill, type: ShadingType.CLEAR }, margins: { top: 60, bottom: 60, left: 60, right: 120 }, children: [new Paragraph({ children: [new TextRun({ text: d.tekst, size: 22, font: 'Calibri' })] })] }),
-                new TableCell({ borders: noBorders, width: { size: 4600, type: WidthType.DXA }, shading: { fill: C.bgGray, type: ShadingType.CLEAR }, margins: { top: 60, bottom: 60, left: 120, right: 60 }, children: [new Paragraph({ children: [new TextRun({ text: '→  ___________________________', size: 22, color: 'AAAAAA', font: 'Calibri' })] })] }),
-              ]})],
+              rows: [new TableRow({
+                cantSplit: true,
+                children: [
+                  new TableCell({ borders: noBorders, width: { size: 400, type: WidthType.DXA }, shading: { fill, type: ShadingType.CLEAR }, margins: { top: 60, bottom: 60, left: 80, right: 40 }, children: [new Paragraph({ children: [new TextRun({ text: `${d.bokstav})`, bold: true, size: 24, color: C.primary, font: 'Calibri' })] })] }),
+                  new TableCell({ borders: { right: { style: BorderStyle.SINGLE, size: 4, color: C.bgGray } }, width: { size: 4000, type: WidthType.DXA }, shading: { fill, type: ShadingType.CLEAR }, margins: { top: 60, bottom: 60, left: 60, right: 120 }, children: [new Paragraph({ children: [new TextRun({ text: d.tekst, size: 22, font: 'Calibri' })] })] }),
+                  new TableCell({ borders: noBorders, width: { size: 4600, type: WidthType.DXA }, shading: { fill: C.bgGray, type: ShadingType.CLEAR }, margins: { top: 60, bottom: 60, left: 120, right: 60 }, children: [new Paragraph({ children: [new TextRun({ text: '→  ___________________________', size: 22, color: 'AAAAAA', font: 'Calibri' })] })] }),
+                ],
+              })],
             }),
             new Paragraph({ spacing: { after: 20 }, children: [] })
           );
         } else {
-          // fyll_inn, ordstilling, korriger: standard to-kolonne layout
+          // fyll_inn, ordstilling, korriger: standard to-kolonne layout – cantSplit hindrer deling
           grammatikkBlock.push(
             new Table({
               width: { size: 9000, type: WidthType.DXA },
               columnWidths: [800, 8200],
-              rows: [new TableRow({ children: [
-                new TableCell({ borders: noBorders, width: { size: 800, type: WidthType.DXA }, shading: { fill, type: ShadingType.CLEAR }, margins: { top: 80, bottom: 80, left: 120, right: 60 }, children: [new Paragraph({ children: [new TextRun({ text: `${d.bokstav})`, bold: true, size: 24, color: C.primary, font: 'Calibri' })] })] }),
-                new TableCell({ borders: noBorders, width: { size: 8200, type: WidthType.DXA }, shading: { fill, type: ShadingType.CLEAR }, margins: { top: 80, bottom: 80, left: 60, right: 120 }, children: [new Paragraph({ children: [new TextRun({ text: d.tekst, size: 24, font: 'Calibri' })] }), svarLinje()] }),
-              ]})],
+              rows: [new TableRow({
+                cantSplit: true,
+                children: [
+                  new TableCell({ borders: noBorders, width: { size: 800, type: WidthType.DXA }, shading: { fill, type: ShadingType.CLEAR }, margins: { top: 80, bottom: 80, left: 120, right: 60 }, children: [new Paragraph({ children: [new TextRun({ text: `${d.bokstav})`, bold: true, size: 24, color: C.primary, font: 'Calibri' })] })] }),
+                  new TableCell({ borders: noBorders, width: { size: 8200, type: WidthType.DXA }, shading: { fill, type: ShadingType.CLEAR }, margins: { top: 80, bottom: 80, left: 60, right: 120 }, children: [new Paragraph({ children: [new TextRun({ text: d.tekst, size: 24, font: 'Calibri' })] }), svarLinje()] }),
+                ],
+              })],
             }),
             new Paragraph({ spacing: { after: 20 }, children: [] })
           );
