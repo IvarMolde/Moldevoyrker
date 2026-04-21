@@ -4,7 +4,7 @@ const https = require('https');
 const {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   HeadingLevel, AlignmentType, BorderStyle, WidthType, ShadingType,
-  LevelFormat, TabStopType, TabStopPosition, PageNumber, Header, Footer, ImageRun,
+  LevelFormat, TabStopType, TabStopPosition, PageNumber, Header, Footer,
 } = require('docx');
 const pptxgen = require('pptxgenjs');
 const fs = require('fs');
@@ -488,394 +488,10 @@ Eksempler:
   });
 }
 
-async function lagSokestrategier(yrke) {
-  // Returnerer søkestrategier + vektede tags + must-have tag + negative tags
-  // Ved feil: bruker yrket selv (transliterert) i stedet for generisk fallback
-  const fallbackStrategi = (yrkeNavn) => ({
-    strategier: [yrkeNavn, `${yrkeNavn} working`, `${yrkeNavn} job`],
-    mustHaveTags: [],
-    kjerneTags: [],
-    stotteTags: [],
-    negativeTags: ['cartoon', 'illustration', 'logo'],
-  });
-
-  return new Promise((resolve) => {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.error('⚠️ GEMINI_API_KEY mangler – bruker yrkenavn som søk');
-      return resolve(fallbackStrategi(yrke));
-    }
-
-    const prompt = `You are translating a Norwegian job title for image search on Pixabay.
-Norwegian job title: "${yrke}"
-
-STEP 1 — Identify the EXACT English equivalent of this profession.
-Examples (study these carefully):
-- "frisør" → "hairdresser" (not "barber" unless male)
-- "snekker" → "carpenter" (works with wood)
-- "rørlegger" → "plumber" (works with pipes/water)
-- "elektriker" → "electrician" (works with electrical wiring)
-- "murer" → "bricklayer" or "mason" (works with bricks/stones)
-- "maler" → "house painter" (paints buildings, NOT artist)
-- "begravelsesagent" → "funeral director" or "mortician"
-- "renholder" → "cleaner" or "janitor"
-- "kokk" → "chef" or "cook" (works in kitchen)
-- "barnehageassistent" → "preschool teacher" or "kindergarten teacher"
-- "bussjåfør" → "bus driver" (drives buses, public transport)
-- "lastebilsjåfør" → "truck driver"
-- "drosjesjåfør" → "taxi driver"
-- "lærer" → "teacher" (in classroom)
-- "sykepleier" → "nurse" (medical care)
-- "tannlege" → "dentist"
-- "veterinær" → "veterinarian"
-- "bonde" → "farmer"
-- "fisker" → "fisherman"
-
-STEP 2 — Generate this JSON object (NO markdown, just JSON):
-
-{
-  "strategier": [
-    "most specific 2-3 word search",
-    "specific workplace context",
-    "general profession name",
-    "broader fallback"
-  ],
-  "mustHaveTags": ["the SINGLE most defining English word for this profession"],
-  "kjerneTags": ["3-4 strongly related English words"],
-  "stotteTags": ["3-5 supporting context English words"],
-  "negativeTags": ["3-5 English words that would indicate WRONG profession"]
-}
-
-EXAMPLE for "bussjåfør":
-{
-  "strategier": ["bus driver wheel", "bus driver uniform", "city bus driver", "public bus interior"],
-  "mustHaveTags": ["bus"],
-  "kjerneTags": ["driver", "vehicle", "transport"],
-  "stotteTags": ["uniform", "wheel", "passenger", "city", "public"],
-  "negativeTags": ["chemistry", "laboratory", "computer", "office", "kitchen"]
-}
-
-EXAMPLE for "frisør":
-{
-  "strategier": ["hairdresser cutting hair", "hair salon woman", "hairdresser scissors", "hair styling"],
-  "mustHaveTags": ["hair"],
-  "kjerneTags": ["hairdresser", "salon", "scissors", "styling"],
-  "stotteTags": ["beauty", "haircut", "stylist", "barber", "woman"],
-  "negativeTags": ["construction", "kitchen", "office", "medical", "garden"]
-}
-
-CRITICAL RULES:
-- mustHaveTags: 1 word ONLY — the absolute defining English word
-- All tags must be in English, lowercase
-- Use the CORRECT English profession (not Norwegian or wrong meaning)
-- negativeTags should disqualify clearly unrelated professions/scenes`;
-
-    const body = JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.1, maxOutputTokens: 600 },
-    });
-
-    const options = {
-      hostname: 'generativelanguage.googleapis.com',
-      path: `/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-    };
-
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          const parsed = JSON.parse(data);
-          if (parsed.error) {
-            console.error('⚠️ Gemini-feil i strategier:', parsed.error.message);
-            return resolve(fallbackStrategi(yrke));
-          }
-          const candidate = parsed.candidates && parsed.candidates[0];
-          if (!candidate) {
-            console.error('⚠️ Tomt Gemini-svar i strategier');
-            return resolve(fallbackStrategi(yrke));
-          }
-          if (candidate.finishReason && candidate.finishReason !== 'STOP') {
-            console.error(`⚠️ Strategi-finishReason: ${candidate.finishReason}`);
-          }
-          let tekst = candidate.content && candidate.content.parts && candidate.content.parts[0] && candidate.content.parts[0].text;
-          if (!tekst) {
-            console.error('⚠️ Ingen tekst i strategi-svar');
-            return resolve(fallbackStrategi(yrke));
-          }
-          tekst = tekst.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
-          const result = JSON.parse(tekst);
-
-          const strategier = Array.isArray(result.strategier) ? result.strategier : [];
-          const lowerArr = (arr) => Array.isArray(arr) ? arr.map(t => t.toLowerCase()) : [];
-
-          const ut = {
-            strategier,
-            mustHaveTags: lowerArr(result.mustHaveTags),
-            kjerneTags:   lowerArr(result.kjerneTags),
-            stotteTags:   lowerArr(result.stotteTags),
-            negativeTags: lowerArr(result.negativeTags),
-          };
-
-          if (strategier.length > 0) {
-            console.log(`📝 Strategier for "${yrke}":`, strategier);
-            console.log(`🎯 MÅ ha tag:`, ut.mustHaveTags);
-            console.log(`🏷️  Kjernetags:`, ut.kjerneTags);
-            console.log(`💬 Støttetags:`, ut.stotteTags);
-            console.log(`🚫 Negative tags:`, ut.negativeTags);
-            resolve(ut);
-          } else {
-            console.error('⚠️ Tom strategi-array – bruker fallback');
-            resolve(fallbackStrategi(yrke));
-          }
-        } catch (e) {
-          console.error('⚠️ Strategi-parsing feilet:', e.message, '– bruker fallback');
-          resolve(fallbackStrategi(yrke));
-        }
-      });
-    });
-    req.setTimeout(8000, () => {
-      console.error('⚠️ Strategi-kall timeout (8s) – bruker fallback');
-      req.destroy();
-      resolve(fallbackStrategi(yrke));
-    });
-    req.on('error', (e) => {
-      console.error('⚠️ Strategi-kall feilet:', e.message);
-      resolve(fallbackStrategi(yrke));
-    });
-    req.write(body);
-    req.end();
-  });
-}
-
-function pixabaySOk(apiKey, sokeord, medKategori) {
-  return new Promise((resolve) => {
-    const q = encodeURIComponent(sokeord);
-    const kategori = medKategori ? '&category=people' : '';
-    // min_width=1280 sikrer høy kvalitet
-    // editors_choice=true gir kun kvalitetskontrollerte bilder (færre, men bedre)
-    // Hvis ingen treff, faller hentBildeBuf tilbake til søk uten editors_choice
-    const path = `/api/?key=${apiKey}&q=${q}&image_type=photo&orientation=horizontal${kategori}&per_page=20&safesearch=true&min_width=1280`;
-
-    const options = {
-      hostname: 'pixabay.com',
-      path,
-      method: 'GET',
-      headers: { 'User-Agent': 'YrkesappenMBO/1.0' },
-    };
-
-    const req = https.request(options, (res) => {
-      let raw = '';
-      res.on('data', c => raw += c);
-      res.on('end', () => {
-        try {
-          if (res.statusCode !== 200) {
-            console.error(`  Pixabay HTTP ${res.statusCode}:`, raw.slice(0, 200));
-            return resolve([]);
-          }
-          const json = JSON.parse(raw);
-          const hits = json.hits || [];
-          console.log(`  📸 Pixabay (people=${medKategori}): ${hits.length} treff`);
-          resolve(hits);
-        } catch (e) {
-          console.error('  Pixabay parse-feil:', e.message);
-          resolve([]);
-        }
-      });
-      res.on('error', () => resolve([]));
-    });
-    req.setTimeout(6000, () => { req.destroy(); resolve([]); });
-    req.on('error', (e) => {
-      console.error('  Pixabay request-feil:', e.message);
-      resolve([]);
-    });
-    req.end();
-  });
-}
-
-// Bygg høyest tilgjengelig bilde-URL fra Pixabay-treff.
-// largeImageURL krever godkjent full API-tilgang (de fleste kontoer har IKKE dette).
-// cdn.pixabay.com CDN-URLer er alltid tilgjengelige og bygges fra previewURL.
-function velgBildeUrl(bilde) {
-  // 1. largeImageURL (1280px) – kun for godkjente kontoer
-  if (bilde.largeImageURL) {
-    return { url: bilde.largeImageURL, kvalitet: '1280px' };
-  }
-
-  // 2. CDN-URL konstruert fra previewURL – ALLTID tilgjengelig
-  // previewURL: https://cdn.pixabay.com/photo/YYYY/MM/DD/HH/MM/slug-ID_150.jpg
-  // Bytt _150.jpg med _1280.jpg for stor versjon
-  if (bilde.previewURL && bilde.previewURL.includes('cdn.pixabay.com')) {
-    const storUrl = bilde.previewURL.replace(/_\d+\.jpg$/, '_1280.jpg');
-    return { url: storUrl, kvalitet: 'CDN 1280px' };
-  }
-
-  // 3. webformatURL (640px) – alltid tilgjengelig, siste fallback
-  if (bilde.webformatURL) {
-    return { url: bilde.webformatURL, kvalitet: '640px webformat' };
-  }
-
-  return null;
-}
-
-function lastNedBildeUrl(imgUrl, kreditt, resolve, redirectTeller = 0) {
-  // Maksimalt 3 redirects for å unngå sirkel
-  if (redirectTeller > 3) {
-    console.error('For mange redirects – avbryter bildenedlasting');
-    return resolve(null);
-  }
-
-  const req = https.get(imgUrl, (imgRes) => {
-    // Følg redirects
-    if ((imgRes.statusCode === 301 || imgRes.statusCode === 302 || imgRes.statusCode === 307) && imgRes.headers.location) {
-      console.log(`  Redirect ${redirectTeller + 1}: ${imgRes.statusCode} → ${imgRes.headers.location.slice(0, 60)}...`);
-      imgRes.resume(); // tøm body
-      return lastNedBildeUrl(imgRes.headers.location, kreditt, resolve, redirectTeller + 1);
-    }
-
-    // Avvis ikke-200 statuser
-    if (imgRes.statusCode !== 200) {
-      console.error(`  Bilde HTTP ${imgRes.statusCode} – hopper over`);
-      imgRes.resume();
-      return resolve(null);
-    }
-
-    const chunks = [];
-    imgRes.on('data', c => chunks.push(c));
-    imgRes.on('end', () => {
-      const buf = Buffer.concat(chunks);
-      // Sjekk at det faktisk er et bilde (JPEG starter med FF D8)
-      if (buf.length < 5000 || buf[0] !== 0xFF || buf[1] !== 0xD8) {
-        console.error(`  Ugyldig bildedata (${buf.length} bytes) – hopper over`);
-        return resolve(null);
-      }
-      console.log(`  ✅ Bilde lastet ned: ${Math.round(buf.length / 1024)} KB`);
-      resolve({ buf, kreditt });
-    });
-    imgRes.on('error', (e) => {
-      console.error('  Bildenedlasting feil:', e.message);
-      resolve(null);
-    });
-  });
-
-  // Timeout på 8 sekunder – unngår at Vercel sin 10s-grense treffes
-  req.setTimeout(8000, () => {
-    console.error('  Bildenedlasting timeout (8s) – avbryter');
-    req.destroy();
-    resolve(null);
-  });
-
-  req.on('error', (e) => {
-    console.error('  Bilde-request feil:', e.message);
-    resolve(null);
-  });
-}
-
-async function hentBildeBuf(yrke) {
-  const apiKey = process.env.PIXABAY_API_KEY;
-  if (!apiKey) {
-    console.log('PIXABAY_API_KEY ikke satt – hopper over bilde');
-    return null;
-  }
-
-  const { strategier, mustHaveTags, kjerneTags, stotteTags, negativeTags } = await lagSokestrategier(yrke);
-
-  // ── Vektet relevans-score med diskvalifisering ─────────────────────────────
-  // Returnerer:
-  //  - score: høyere = mer relevant
-  //  - kvalifisert: false hvis bildet skal AVVISES
-  function vurderBilde(bilde) {
-    const tagsLower = (bilde.tags || '').toLowerCase();
-
-    // 1. SJEKK NEGATIVE TAGS – hvis matchende, AVVIS umiddelbart
-    const negativeMatch = negativeTags.find(t => tagsLower.includes(t));
-    if (negativeMatch) {
-      return { score: -100, kvalifisert: false, grunn: `negativ tag "${negativeMatch}"` };
-    }
-
-    // 2. SJEKK MUST-HAVE TAG – må finnes for at bildet skal vurderes
-    if (mustHaveTags.length > 0) {
-      const hasMustHave = mustHaveTags.some(t => tagsLower.includes(t));
-      if (!hasMustHave) {
-        return { score: 0, kvalifisert: false, grunn: `mangler must-have ${JSON.stringify(mustHaveTags)}` };
-      }
-    }
-
-    // 3. BEREGN VEKTET SCORE
-    let score = 0;
-    score += mustHaveTags.filter(t => tagsLower.includes(t)).length * 10;
-    score += kjerneTags.filter(t => tagsLower.includes(t)).length * 3;
-    score += stotteTags.filter(t => tagsLower.includes(t)).length * 1;
-
-    return { score, kvalifisert: true, grunn: 'OK' };
-  }
-
-  for (const sokeord of strategier) {
-    console.log(`🔍 Pixabay-søk: "${sokeord}"`);
-    let bilder = await pixabaySOk(apiKey, sokeord, false);
-
-    if (!bilder.length) {
-      console.log(`  Ingen treff – prøver med people-filter`);
-      bilder = await pixabaySOk(apiKey, sokeord, true);
-    }
-
-    if (bilder.length === 0) continue;
-
-    // Vurder hvert bilde
-    const vurderte = bilder.map(b => ({
-      bilde: b,
-      ...vurderBilde(b),
-    }));
-
-    // Behold KUN kvalifiserte bilder
-    const kvalifiserte = vurderte.filter(v => v.kvalifisert);
-    const avviste = vurderte.filter(v => !v.kvalifisert);
-
-    console.log(`  📊 ${kvalifiserte.length} kvalifiserte, ${avviste.length} avviste`);
-    if (avviste.length > 0 && avviste.length <= 3) {
-      avviste.forEach(a => console.log(`     ❌ "${(a.bilde.tags || '').slice(0, 60)}" → ${a.grunn}`));
-    }
-
-    if (kvalifiserte.length === 0) {
-      console.log(`  ⚠️  Ingen relevante bilder for "${sokeord}" – prøver neste`);
-      continue;
-    }
-
-    // Sorter etter score (høyest først), velg beste
-    kvalifiserte.sort((a, b) => b.score - a.score);
-    const beste = kvalifiserte[0];
-
-    console.log(`  📈 Topp-scores: ${kvalifiserte.slice(0, 5).map(v => v.score).join(', ')}`);
-    console.log(`  🎯 Beste tags: "${beste.bilde.tags}" (score=${beste.score})`);
-
-    const bilde = beste.bilde;
-    const bildeUrlInfo = velgBildeUrl(bilde);
-    if (!bildeUrlInfo) {
-      console.log(`  Ingen gyldig bilde-URL – prøver neste`);
-      continue;
-    }
-
-    const kreditt = {
-      fotograf:  bilde.user    || 'Ukjent',
-      pageURL:   bilde.pageURL || `https://pixabay.com/photos/${bilde.id}/`,
-      kortTekst: `${bilde.user || 'Ukjent'} via Pixabay`,
-    };
-    console.log(`✅ Valgt (${bildeUrlInfo.kvalitet}): ${kreditt.kortTekst} – ${bilde.imageWidth}×${bilde.imageHeight}px`);
-
-    return new Promise((resolve) => lastNedBildeUrl(bildeUrlInfo.url, kreditt, resolve));
-  }
-
-  console.log('❌ Ingen relevante bilder funnet etter alle strategier');
-  return null;
-}
 
 // ─── DOCX builder ──────────────────────────────────────────────────────────────
-async function buildDocx(data, hjelpesprak, plassering, bildeObj, grammatikkData) {
+async function buildDocx(data, hjelpesprak, plassering, grammatikkData) {
   const { yrke, niva, intro, seksjoner, ordliste } = data;
-  const bildeBuf = bildeObj ? bildeObj.buf : null;
-  const kreditt  = bildeObj ? bildeObj.kreditt : null;
   const showHelp = hjelpesprak && hjelpesprak !== 'ingen';
   const ordlisteAtEnd = showHelp && plassering === 'slutt';
 
@@ -958,72 +574,6 @@ async function buildDocx(data, hjelpesprak, plassering, bildeObj, grammatikkData
     });
   }
 
-  // ── Robust JPEG-dimensjonsleser ──────────────────────────────────────────────
-  function lesJpegDimensjoner(buf) {
-    try {
-      const sofMarkors = [0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB];
-      if (buf[0] !== 0xFF || buf[1] !== 0xD8) return { w: 1280, h: 853 };
-      let i = 2;
-      while (i < buf.length - 9) {
-        if (buf[i] !== 0xFF) { i++; continue; }
-        const marker = buf[i + 1];
-        if (sofMarkors.includes(marker)) {
-          const h = (buf[i + 5] << 8) | buf[i + 6];
-          const w = (buf[i + 7] << 8) | buf[i + 8];
-          if (w > 0 && h > 0) {
-            console.log(`JPEG-dimensjoner: ${w}×${h}px`);
-            return { w, h };
-          }
-        }
-        // Sikker hopp: len inkluderer de 2 lengdebytene selv
-        const len = (buf[i + 2] << 8) | buf[i + 3];
-        i += 2 + Math.max(len, 2); // aldri hoppe 0 – hindrer uendelig løkke
-      }
-    } catch (e) { /* ignorer */ }
-    console.log('JPEG-dimensjoner ikke funnet – bruker standard 1280×853');
-    return { w: 1280, h: 853 };
-  }
-
-  // ── Beregn visningsdimensjoner med bevart aspektforhold ──────────────────────
-  // Skalerer ned proporsjonalt – aldri opp, aldri strekk
-  function beregnDimensjoner(origW, origH, maxW, maxH) {
-    const skala = Math.min(maxW / origW, maxH / origH, 1);
-    return {
-      w: Math.round(origW * skala),
-      h: Math.round(origH * skala),
-    };
-  }
-
-  // Tittelblokk i Word
-  const bildeParagraph = (() => {
-    if (!bildeBuf) return [];
-    const { w: origW, h: origH } = lesJpegDimensjoner(bildeBuf);
-
-    // A4 innholdsbredde ≈ 620px ved 96dpi
-    // Bevar aspektforhold: sett max bredde til 620px, max høyde til 310px
-    // For et 3:2-bilde gir dette 620×413 → skaleres til 620×310 (panorama)
-    const { w: visW, h: visH } = beregnDimensjoner(origW, origH, 620, 310);
-    console.log(`Word-bilde: orig ${origW}×${origH} → vis ${visW}×${visH}px`);
-
-    return [
-      new Paragraph({
-        spacing: { before: 0, after: 0 },
-        children: [new ImageRun({
-          data: bildeBuf,
-          transformation: { width: visW, height: visH },
-          type: 'jpg',
-        })],
-      }),
-      new Paragraph({
-        spacing: { before: 30, after: 0 },
-        children: [new TextRun({
-          text: `📷 ${kreditt.kortTekst}  –  ${kreditt.pageURL}`,
-          size: 16, italics: true, color: C.textMid, font: 'Calibri',
-        })],
-      }),
-    ];
-  })();
-
   const titleBlock = [
     new Paragraph({
       shading: { fill: C.primary, type: ShadingType.CLEAR },
@@ -1038,7 +588,6 @@ async function buildDocx(data, hjelpesprak, plassering, bildeObj, grammatikkData
         new TextRun({ text: '   |   Molde voksenopplæringssenter', size: 24, color: C.bgGray, font: 'Calibri' }),
       ],
     }),
-    ...bildeParagraph,
     new Paragraph({ spacing: { after: 200 }, children: [] }),
   ];
 
@@ -1297,15 +846,13 @@ async function buildDocx(data, hjelpesprak, plassering, bildeObj, grammatikkData
 }
 
 // ─── PPTX builder ──────────────────────────────────────────────────────────────
-async function buildPptx(data, yrke, niva, hjelpesprak, fokus, bildeObj) {
+async function buildPptx(data, yrke, niva, hjelpesprak, fokus) {
   const { hms, egenskaper, arbeidsoppgaver, utdanning } = data.pptx;
   const seksjoner = data.seksjoner || [];
   const ordliste = data.ordliste || [];
   const showHelp = hjelpesprak && hjelpesprak !== 'ingen';
   const hasFokus = fokus && fokus.trim().length > 0;
   const tekster = seksjoner.filter(s => s.type === 'tekst').slice(0, 3);
-  const bildeBuf = bildeObj ? bildeObj.buf : null;
-  const kreditt  = bildeObj ? bildeObj.kreditt : null;
 
   const pres = new pptxgen();
   pres.layout = 'LAYOUT_16x9';
@@ -1341,51 +888,10 @@ async function buildPptx(data, yrke, niva, hjelpesprak, fokus, bildeObj) {
     s.addText(text, { x, y, w, h, fontSize: opts.fontSize || 14, bold: opts.bold || false, italic: opts.italic || false, color: opts.color || C.textDark, fontFace: 'Calibri', align: opts.align || 'left', valign: opts.valign || 'top', wrap: true, shrinkText: true, margin: opts.margin !== undefined ? opts.margin : 6 });
   }
 
-  const bildeData = bildeBuf ? `image/jpeg;base64,${bildeBuf.toString('base64')}` : null;
-
-  // ── Les aspektforhold fra bildebufferen ──────────────────────────────────────
-  // Brukes til å beregne riktige dimensjoner i PPTX uten strekking
-  const bildeDim = (() => {
-    if (!bildeBuf) return { w: 1280, h: 853, ar: 1.5 };
-    try {
-      const sofMarkors = [0xC0,0xC1,0xC2,0xC3,0xC5,0xC6,0xC7,0xC9,0xCA,0xCB];
-      let i = 2;
-      while (i < bildeBuf.length - 9) {
-        if (bildeBuf[i] !== 0xFF) { i++; continue; }
-        if (sofMarkors.includes(bildeBuf[i+1])) {
-          const h = (bildeBuf[i+5] << 8) | bildeBuf[i+6];
-          const w = (bildeBuf[i+7] << 8) | bildeBuf[i+8];
-          if (w > 0 && h > 0) {
-            console.log(`PPTX-bilde dimensjoner: ${w}×${h}px (AR=${(w/h).toFixed(2)})`);
-            return { w, h, ar: w / h };
-          }
-        }
-        const len = (bildeBuf[i+2] << 8) | bildeBuf[i+3];
-        i += 2 + (len > 1 ? len : 1);
-      }
-    } catch(e) {}
-    return { w: 1280, h: 853, ar: 1.5 };
-  })();
-
-  // ── Slide 1 – Tittel med bilde ───────────────────────────────────────────────
-  // Slide: 10" × 5.625" (AR=1.778)
-  // cover: skalerer bildet til å dekke hele sliden og klipper langs korteste akse
-  // Dette er riktig for bakgrunnsbilder – bevarer aspektforhold, ingen strekking
+  // ── Slide 1 – Tittelslide ────────────────────────────────────────────────────
   {
     const s = pres.addSlide();
     s.background = { color: C.primary };
-    if (bildeData) {
-      s.addImage({
-        data: bildeData,
-        x: 0, y: 0, w: 10, h: 5.625,
-        sizing: { type: 'cover', w: 10, h: 5.625 },
-      });
-      s.addShape(pres.shapes.RECTANGLE, {
-        x: 0, y: 0, w: 10, h: 5.625,
-        fill: { color: C.primary, transparency: 35 },
-        line: { color: C.primary, transparency: 35 },
-      });
-    }
     s.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0,     w: 10, h: 0.2, fill: { color: C.accent }, line: { color: C.accent } });
     s.addShape(pres.shapes.RECTANGLE, { x: 0, y: 5.425, w: 10, h: 0.2, fill: { color: C.accent }, line: { color: C.accent } });
     s.addShape(pres.shapes.RECTANGLE, { x: 0.5, y: 1.2, w: 9, h: 2.5, fill: { color: '000000', transparency: 45 }, line: { color: '000000', transparency: 45 } });
@@ -1393,81 +899,17 @@ async function buildPptx(data, yrke, niva, hjelpesprak, fokus, bildeObj) {
     s.addText(`Norsknivå ${niva}`, { x: 0.5, y: 2.85, w: 9, h: 0.5, fontSize: 20, color: C.accent, fontFace: 'Calibri', align: 'center', valign: 'middle', margin: 0 });
     s.addText('Molde voksenopplæringssenter – MBO', { x: 0.5, y: 3.55, w: 9, h: 0.4, fontSize: 13, color: C.bgGray, fontFace: 'Calibri', align: 'center', valign: 'middle', margin: 0 });
     if (hasFokus) s.addText(`Fokus: ${fokus}`, { x: 1.5, y: 4.1, w: 7, h: 0.5, fontSize: 13, italic: true, color: C.accent, fontFace: 'Calibri', align: 'center', valign: 'middle', wrap: true, shrinkText: true, margin: 4 });
-    if (bildeData && kreditt) {
-      s.addText(`📷 ${kreditt.kortTekst}`, {
-        x: 5.5, y: 5.05, w: 4.3, h: 0.32,
-        fontSize: 8, italic: true, color: 'DDDDDD', fontFace: 'Calibri',
-        align: 'right', valign: 'middle', margin: 0,
-      });
-    }
   }
 
   // ── Slide 2 – Hva er dette yrket? ───────────────────────────────────────────
-  // Høyre panel: 3.45" × 4.3" (portrettformat, AR=0.80)
-  // Pixabay-bilder er typisk landskap (AR ≈ 1.5).
-  // contain: bildet skaleres ned til å passe INNI boksen uten å klippe – ingen strekking.
-  // Teal-bakgrunn fyller det som er igjen rundt bildet.
   {
     const s = lightSlide('Hva er dette yrket?', 'Forberedelse til arbeidsheftet');
     const items = arbeidsoppgaver.map((t, idx) => ({ text: t, options: { bullet: true, breakLine: idx < arbeidsoppgaver.length - 1, fontSize: 15, color: C.textDark, fontFace: 'Calibri', paraSpaceAfter: 8 } }));
     s.addText(items, { x: 0.25, y: 1.1, w: 5.8, h: 4.3, valign: 'top', wrap: true, shrinkText: true, margin: 8 });
-    if (bildeData) {
-      // Panel-dimensjoner i tommer
-      const panelW = 3.45;
-      const panelH = 4.3;
-      const panelAR = panelW / panelH; // 0.802
-
-      // Beregn contain-plassering: skalerer bildet ned til å passe inni panelet
-      let imgW, imgH, imgX, imgY;
-      if (bildeDim.ar > panelAR) {
-        // Bildet er bredere enn panelet → begrenses av bredde
-        imgW = panelW;
-        imgH = panelW / bildeDim.ar;
-        imgX = 6.3;
-        imgY = 1.1 + (panelH - imgH) / 2; // sentrert vertikalt
-      } else {
-        // Bildet er høyere enn panelet → begrenses av høyde
-        imgH = panelH;
-        imgW = panelH * bildeDim.ar;
-        imgX = 6.3 + (panelW - imgW) / 2; // sentrert horisontalt
-        imgY = 1.1;
-      }
-
-      // Teal-bakgrunn for hele panelet (fyller rundt bildet)
-      s.addShape(pres.shapes.RECTANGLE, {
-        x: 6.3, y: 1.1, w: panelW, h: panelH,
-        fill: { color: C.primary }, line: { color: C.primary },
-      });
-      // Bildet med nøyaktig beregnet posisjon og størrelse – ingen strekking
-      s.addImage({
-        data: bildeData,
-        x: imgX, y: imgY, w: imgW, h: imgH,
-      });
-      // Lett overlay bare over bildet
-      s.addShape(pres.shapes.RECTANGLE, {
-        x: imgX, y: imgY, w: imgW, h: imgH,
-        fill: { color: C.primary, transparency: 55 },
-        line: { color: C.primary, transparency: 55 },
-      });
-      // Yrkestittel-bar nederst i panelet
-      s.addShape(pres.shapes.RECTANGLE, {
-        x: 6.3, y: 4.7, w: panelW, h: 0.7,
-        fill: { color: C.primary, transparency: 10 },
-        line: { color: C.primary, transparency: 10 },
-      });
-      safeText(s, yrke, 6.35, 4.72, 3.35, 0.65, { bold: true, color: C.white, fontSize: 15, align: 'center', valign: 'middle', margin: 4 });
-      if (kreditt) {
-        s.addText(`📷 ${kreditt.kortTekst}`, {
-          x: 6.3, y: 5.42, w: panelW, h: 0.2,
-          fontSize: 7, italic: true, color: C.textMid, fontFace: 'Calibri',
-          align: 'center', valign: 'middle', margin: 0,
-        });
-      }
-    } else {
-      s.addShape(pres.shapes.RECTANGLE, { x: 6.3, y: 1.1, w: 3.45, h: 4.3, fill: { color: C.primary }, line: { color: C.primary }, shadow: makeShadow() });
-      s.addText(yrke.charAt(0).toUpperCase(), { x: 6.3, y: 1.1, w: 3.45, h: 3.0, fontSize: 110, bold: true, color: C.white, fontFace: 'Calibri', align: 'center', valign: 'middle', margin: 0 });
-      safeText(s, yrke, 6.35, 4.1, 3.35, 0.7, { bold: true, color: C.accent, fontSize: 14, align: 'center', valign: 'middle', margin: 4 });
-    }
+    // Høyre panel: stor bokstav på teal bakgrunn
+    s.addShape(pres.shapes.RECTANGLE, { x: 6.3, y: 1.1, w: 3.45, h: 4.3, fill: { color: C.primary }, line: { color: C.primary }, shadow: makeShadow() });
+    s.addText(yrke.charAt(0).toUpperCase(), { x: 6.3, y: 1.1, w: 3.45, h: 3.0, fontSize: 110, bold: true, color: C.white, fontFace: 'Calibri', align: 'center', valign: 'middle', margin: 0 });
+    safeText(s, yrke, 6.35, 4.1, 3.35, 0.7, { bold: true, color: C.accent, fontSize: 14, align: 'center', valign: 'middle', margin: 4 });
   }
 
   // ── Slide 3 – Viktige ord ────────────────────────────────────────────────────
@@ -1662,30 +1104,24 @@ app.post('/api/generer', async (req, res) => {
     }
     if (data.intro) data.intro = rettForbokstav(data.intro, yrkeNormalisert);
 
-    // Hent bilde og generer grammatikk parallelt
+    // Generer grammatikkblokk om ønsket
     const gFokus = (grammatikkFokus || 'ingen').trim();
-
-    const [bildeObj, grammatikkData] = await Promise.all([
-      hentBildeBuf(yrkeNormalisert),
-      (async () => {
-        if (gFokus === 'ingen') return null;
-        console.log(`Genererer grammatikkblokk: "${gFokus}"`);
-        try {
-          const gRaw = await callGemini(buildGrammatikkPrompt(yrkeNormalisert, niva, gFokus));
-          const gClean = gRaw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
-          const gData = JSON.parse(gClean);
-          console.log(`Grammatikkblokk generert: ${gData.tema}`);
-          return gData;
-        } catch (e) {
-          console.error('Grammatikk-generering feilet:', e.message);
-          return null;
-        }
-      })(),
-    ]);
+    let grammatikkData = null;
+    if (gFokus !== 'ingen') {
+      console.log(`Genererer grammatikkblokk: "${gFokus}"`);
+      try {
+        const gRaw = await callGemini(buildGrammatikkPrompt(yrkeNormalisert, niva, gFokus));
+        const gClean = gRaw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
+        grammatikkData = JSON.parse(gClean);
+        console.log(`Grammatikkblokk generert: ${grammatikkData.tema}`);
+      } catch (e) {
+        console.error('Grammatikk-generering feilet:', e.message);
+      }
+    }
 
     const [docxBuf, pptxBuf] = await Promise.all([
-      buildDocx(data, sprak, plassering, bildeObj, grammatikkData),
-      buildPptx(data, yrkeNormalisert, niva, sprak, fokus, bildeObj),
+      buildDocx(data, sprak, plassering, grammatikkData),
+      buildPptx(data, yrkeNormalisert, niva, sprak, fokus),
     ]);
 
     const safeName = yrkeNormalisert.replace(/[^a-zA-ZæøåÆØÅ0-9\-]/g, '_');
