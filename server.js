@@ -489,55 +489,84 @@ Eksempler:
 }
 
 async function lagSokestrategier(yrke) {
-  // Ber Gemini om FLERE søkealternativer, rangert fra mest til minst spesifikt.
-  // Returnerer både engelske søkeord OG forventede tags for filtrering.
+  // Returnerer søkestrategier + vektede tags + must-have tag + negative tags
   return new Promise((resolve) => {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) return resolve({
-      strategier: ['professional worker', 'workplace people', 'working professional'],
-      forventedeTags: [],
+      strategier: ['professional worker'],
+      mustHaveTags: [],
+      kjerneTags: [],
+      stotteTags: [],
+      negativeTags: [],
     });
 
     const prompt = `You are translating a Norwegian job title for image search on Pixabay.
 Norwegian job title: "${yrke}"
 
-Step 1: Identify the most accurate English equivalent of this profession.
-Examples:
-- "frisør" → "hairdresser" or "hair stylist"
-- "snekker" → "carpenter"
-- "rørlegger" → "plumber"
-- "elektriker" → "electrician"
-- "murer" → "bricklayer" or "mason"
-- "maler" → "painter" (house painter, not artist)
+STEP 1 — Identify the EXACT English equivalent of this profession.
+Examples (study these carefully):
+- "frisør" → "hairdresser" (not "barber" unless male)
+- "snekker" → "carpenter" (works with wood)
+- "rørlegger" → "plumber" (works with pipes/water)
+- "elektriker" → "electrician" (works with electrical wiring)
+- "murer" → "bricklayer" or "mason" (works with bricks/stones)
+- "maler" → "house painter" (paints buildings, NOT artist)
 - "begravelsesagent" → "funeral director" or "mortician"
 - "renholder" → "cleaner" or "janitor"
-- "kokk" → "chef" or "cook"
-- "barnehageassistent" → "kindergarten teacher" or "preschool teacher"
+- "kokk" → "chef" or "cook" (works in kitchen)
+- "barnehageassistent" → "preschool teacher" or "kindergarten teacher"
+- "bussjåfør" → "bus driver" (drives buses, public transport)
+- "lastebilsjåfør" → "truck driver"
+- "drosjesjåfør" → "taxi driver"
+- "lærer" → "teacher" (in classroom)
+- "sykepleier" → "nurse" (medical care)
+- "tannlege" → "dentist"
+- "veterinær" → "veterinarian"
+- "bonde" → "farmer"
+- "fisker" → "fisherman"
 
-Step 2: Generate search strategies and expected tags.
+STEP 2 — Generate this JSON object (NO markdown, just JSON):
 
-Reply with ONLY valid JSON in this exact format:
 {
   "strategier": [
-    "most specific search (e.g. 'hairdresser cutting hair')",
-    "specific workplace (e.g. 'hair salon woman')",
-    "general profession (e.g. 'hairdresser')",
-    "fallback (e.g. 'hair styling')"
+    "most specific 2-3 word search",
+    "specific workplace context",
+    "general profession name",
+    "broader fallback"
   ],
-  "forventedeTags": ["hairdresser", "salon", "hair", "haircut", "stylist"]
+  "mustHaveTags": ["the SINGLE most defining English word for this profession"],
+  "kjerneTags": ["3-4 strongly related English words"],
+  "stotteTags": ["3-5 supporting context English words"],
+  "negativeTags": ["3-5 English words that would indicate WRONG profession"]
 }
 
-Rules:
-- "strategier" must contain 4 English search queries from MOST to LEAST specific
-- Each query: 1-3 words describing what the worker does or where they work
-- "forventedeTags" must contain 5-8 English keywords that should appear in image tags
-- These tags are used to FILTER OUT irrelevant images (e.g. wrong profession)
-- Use the CORRECT English profession name – do not guess or use Norwegian words
-- If the Norwegian word looks similar to English (false friend), pick the actual meaning`;
+EXAMPLE for "bussjåfør":
+{
+  "strategier": ["bus driver wheel", "bus driver uniform", "city bus driver", "public bus interior"],
+  "mustHaveTags": ["bus"],
+  "kjerneTags": ["driver", "vehicle", "transport"],
+  "stotteTags": ["uniform", "wheel", "passenger", "city", "public"],
+  "negativeTags": ["chemistry", "laboratory", "computer", "office", "kitchen"]
+}
+
+EXAMPLE for "frisør":
+{
+  "strategier": ["hairdresser cutting hair", "hair salon woman", "hairdresser scissors", "hair styling"],
+  "mustHaveTags": ["hair"],
+  "kjerneTags": ["hairdresser", "salon", "scissors", "styling"],
+  "stotteTags": ["beauty", "haircut", "stylist", "barber", "woman"],
+  "negativeTags": ["construction", "kitchen", "office", "medical", "garden"]
+}
+
+CRITICAL RULES:
+- mustHaveTags: 1 word ONLY — the absolute defining English word
+- All tags must be in English, lowercase
+- Use the CORRECT English profession (not Norwegian or wrong meaning)
+- negativeTags should disqualify clearly unrelated professions/scenes`;
 
     const body = JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.1, maxOutputTokens: 400 },
+      generationConfig: { temperature: 0.1, maxOutputTokens: 600 },
     });
 
     const options = {
@@ -556,25 +585,36 @@ Rules:
           let tekst = parsed.candidates[0].content.parts[0].text.trim();
           tekst = tekst.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
           const result = JSON.parse(tekst);
+
           const strategier = Array.isArray(result.strategier) ? result.strategier : [];
-          const forventedeTags = Array.isArray(result.forventedeTags)
-            ? result.forventedeTags.map(t => t.toLowerCase()) : [];
+          const lowerArr = (arr) => Array.isArray(arr) ? arr.map(t => t.toLowerCase()) : [];
+
+          const ut = {
+            strategier,
+            mustHaveTags: lowerArr(result.mustHaveTags),
+            kjerneTags:   lowerArr(result.kjerneTags),
+            stotteTags:   lowerArr(result.stotteTags),
+            negativeTags: lowerArr(result.negativeTags),
+          };
 
           if (strategier.length > 0) {
-            console.log(`📝 Søkestrategier for "${yrke}":`, strategier);
-            console.log(`🏷️  Forventede tags:`, forventedeTags);
-            resolve({ strategier, forventedeTags });
+            console.log(`📝 Strategier for "${yrke}":`, strategier);
+            console.log(`🎯 MÅ ha tag:`, ut.mustHaveTags);
+            console.log(`🏷️  Kjernetags:`, ut.kjerneTags);
+            console.log(`💬 Støttetags:`, ut.stotteTags);
+            console.log(`🚫 Negative tags:`, ut.negativeTags);
+            resolve(ut);
           } else {
-            resolve({ strategier: ['professional worker'], forventedeTags: [] });
+            resolve({ strategier: ['professional worker'], mustHaveTags: [], kjerneTags: [], stotteTags: [], negativeTags: [] });
           }
         } catch (e) {
           console.error('Søkestrategi-parsing feilet:', e.message);
-          resolve({ strategier: ['professional worker'], forventedeTags: [] });
+          resolve({ strategier: ['professional worker'], mustHaveTags: [], kjerneTags: [], stotteTags: [], negativeTags: [] });
         }
       });
     });
-    req.setTimeout(8000, () => { req.destroy(); resolve({ strategier: ['professional worker'], forventedeTags: [] }); });
-    req.on('error', () => resolve({ strategier: ['professional worker'], forventedeTags: [] }));
+    req.setTimeout(8000, () => { req.destroy(); resolve({ strategier: ['professional worker'], mustHaveTags: [], kjerneTags: [], stotteTags: [], negativeTags: [] }); });
+    req.on('error', () => resolve({ strategier: ['professional worker'], mustHaveTags: [], kjerneTags: [], stotteTags: [], negativeTags: [] }));
     req.write(body);
     req.end();
   });
@@ -710,23 +750,42 @@ async function hentBildeBuf(yrke) {
     return null;
   }
 
-  // Hent rangerte søkestrategier OG forventede tags fra Gemini
-  const { strategier, forventedeTags } = await lagSokestrategier(yrke);
+  const { strategier, mustHaveTags, kjerneTags, stotteTags, negativeTags } = await lagSokestrategier(yrke);
 
-  // Beregn relevans-score for et bilde basert på hvor mange forventede tags som matcher
-  function relevansScore(bilde) {
-    if (!forventedeTags.length) return 0;
-    const bildeTagsLower = (bilde.tags || '').toLowerCase();
-    return forventedeTags.filter(tag => bildeTagsLower.includes(tag)).length;
+  // ── Vektet relevans-score med diskvalifisering ─────────────────────────────
+  // Returnerer:
+  //  - score: høyere = mer relevant
+  //  - kvalifisert: false hvis bildet skal AVVISES
+  function vurderBilde(bilde) {
+    const tagsLower = (bilde.tags || '').toLowerCase();
+
+    // 1. SJEKK NEGATIVE TAGS – hvis matchende, AVVIS umiddelbart
+    const negativeMatch = negativeTags.find(t => tagsLower.includes(t));
+    if (negativeMatch) {
+      return { score: -100, kvalifisert: false, grunn: `negativ tag "${negativeMatch}"` };
+    }
+
+    // 2. SJEKK MUST-HAVE TAG – må finnes for at bildet skal vurderes
+    if (mustHaveTags.length > 0) {
+      const hasMustHave = mustHaveTags.some(t => tagsLower.includes(t));
+      if (!hasMustHave) {
+        return { score: 0, kvalifisert: false, grunn: `mangler must-have ${JSON.stringify(mustHaveTags)}` };
+      }
+    }
+
+    // 3. BEREGN VEKTET SCORE
+    let score = 0;
+    score += mustHaveTags.filter(t => tagsLower.includes(t)).length * 10;
+    score += kjerneTags.filter(t => tagsLower.includes(t)).length * 3;
+    score += stotteTags.filter(t => tagsLower.includes(t)).length * 1;
+
+    return { score, kvalifisert: true, grunn: 'OK' };
   }
 
-  // Vi prøver alle strategier først UTEN people-filter for å få flere kandidater,
-  // siden category=people ofte begrenser unødvendig.
   for (const sokeord of strategier) {
     console.log(`🔍 Pixabay-søk: "${sokeord}"`);
     let bilder = await pixabaySOk(apiKey, sokeord, false);
 
-    // Hvis ingen treff, prøv med people-filter (for portrettbilder)
     if (!bilder.length) {
       console.log(`  Ingen treff – prøver med people-filter`);
       bilder = await pixabaySOk(apiKey, sokeord, true);
@@ -734,31 +793,37 @@ async function hentBildeBuf(yrke) {
 
     if (bilder.length === 0) continue;
 
-    // Beregn relevans-score for hvert bilde
-    const skoredeBilder = bilder.map(b => ({
+    // Vurder hvert bilde
+    const vurderte = bilder.map(b => ({
       bilde: b,
-      score: relevansScore(b),
+      ...vurderBilde(b),
     }));
 
-    // Sorter etter score (høyest først)
-    skoredeBilder.sort((a, b) => b.score - a.score);
+    // Behold KUN kvalifiserte bilder
+    const kvalifiserte = vurderte.filter(v => v.kvalifisert);
+    const avviste = vurderte.filter(v => !v.kvalifisert);
 
-    const beste = skoredeBilder[0];
-    console.log(`  📊 Relevans-score: ${skoredeBilder.slice(0, 5).map(s => s.score).join(', ')}`);
-    console.log(`  🏷️  Beste tags: "${beste.bilde.tags}"`);
+    console.log(`  📊 ${kvalifiserte.length} kvalifiserte, ${avviste.length} avviste`);
+    if (avviste.length > 0 && avviste.length <= 3) {
+      avviste.forEach(a => console.log(`     ❌ "${(a.bilde.tags || '').slice(0, 60)}" → ${a.grunn}`));
+    }
 
-    // Avvis hele resultatet hvis ingen bilder har minst 1 matchende tag
-    // (og vi har forventede tags definert)
-    if (forventedeTags.length > 0 && beste.score === 0) {
-      console.log(`  ⚠️  Ingen bilder matcher forventede tags – prøver neste strategi`);
+    if (kvalifiserte.length === 0) {
+      console.log(`  ⚠️  Ingen relevante bilder for "${sokeord}" – prøver neste`);
       continue;
     }
 
-    // Velg beste relevante bilde
+    // Sorter etter score (høyest først), velg beste
+    kvalifiserte.sort((a, b) => b.score - a.score);
+    const beste = kvalifiserte[0];
+
+    console.log(`  📈 Topp-scores: ${kvalifiserte.slice(0, 5).map(v => v.score).join(', ')}`);
+    console.log(`  🎯 Beste tags: "${beste.bilde.tags}" (score=${beste.score})`);
+
     const bilde = beste.bilde;
     const bildeUrlInfo = velgBildeUrl(bilde);
     if (!bildeUrlInfo) {
-      console.log(`  Ingen gyldig bilde-URL – prøver neste strategi`);
+      console.log(`  Ingen gyldig bilde-URL – prøver neste`);
       continue;
     }
 
@@ -767,8 +832,7 @@ async function hentBildeBuf(yrke) {
       pageURL:   bilde.pageURL || `https://pixabay.com/photos/${bilde.id}/`,
       kortTekst: `${bilde.user || 'Ukjent'} via Pixabay`,
     };
-    console.log(`✅ Valgt bilde (${bildeUrlInfo.kvalitet}, score=${beste.score}): ${kreditt.kortTekst}`);
-    console.log(`   Bilde: ${bilde.imageWidth}×${bilde.imageHeight}px`);
+    console.log(`✅ Valgt (${bildeUrlInfo.kvalitet}): ${kreditt.kortTekst} – ${bilde.imageWidth}×${bilde.imageHeight}px`);
 
     return new Promise((resolve) => lastNedBildeUrl(bildeUrlInfo.url, kreditt, resolve));
   }
